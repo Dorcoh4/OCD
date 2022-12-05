@@ -6,9 +6,13 @@ from nerf_utils.tiny_nerf import VeryTinyNerfModel
 from torchvision.datasets import mnist
 from torchvision import transforms
 import Lenet5
+import bert_ocd
 from torch.utils.data import DataLoader
 from torchvision.transforms import ToTensor
 from copy import deepcopy
+from transformers import AutoModelForSequenceClassification, AutoTokenizer
+import datasets
+
 def wrapper_dataset(config, args, device):
     if args.datatype == 'tinynerf':
         
@@ -88,6 +92,38 @@ def wrapper_dataset(config, args, device):
             train_x, train_label = data[0], data[1]
             train_x = train_x[:,0,:,:].unsqueeze(1)
             batch = {'input':train_x,'output':train_label}
+            test_ds.append(deepcopy(batch))
+    elif args.datatype == 'scicite':
+        model = bert_ocd.BertOriginal(AutoModelForSequenceClassification.from_pretrained("bert-base-uncased", num_labels=3).cuda())
+        tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
+        ds = datasets.load_dataset("scicite")
+
+        # train_dataset = mnist.MNIST(
+        #         "\data\mnist", train=True, download=True, transform=ToTensor())
+        # test_dataset = mnist.MNIST(
+        #         "\data\mnist", train=False, download=True, transform=ToTensor())
+        def tokenize_dataset(data):
+            # Keys of the returned dictionary will be added to the dataset as columns
+            return tokenizer(data["string"], padding="max_length", truncation=True)
+
+        tokenized_ds = ds.map(tokenize_dataset)
+        tokenized_ds = tokenized_ds.remove_columns(["string"])
+        tokenized_ds = tokenized_ds.rename_column("label", "labels")
+        tokenized_ds.set_format("torch")
+        train_dataset = tokenized_ds['train']
+        test_dataset = tokenized_ds['test']
+        train_loader = DataLoader(train_dataset, batch_size=1, shuffle=True)
+        test_loader = DataLoader(test_dataset, batch_size=1)
+        train_ds, test_ds = [], []
+        for idx, data in enumerate(train_loader):
+            train_x, train_label = data['input_ids'], data['labels']
+            # train_x = train_x[:, 0].unsqueeze(1)
+            batch = {'input': train_x, 'attention_mask': data['attention_mask'], 'output': train_label}
+            train_ds.append(deepcopy(batch))
+        for idx, data in enumerate(test_loader):
+            test_x, test_label = data['input_ids'], data['labels']
+            # test_x = test_x[:, 0].unsqueeze(1)
+            batch = {'input': test_x, 'attention_mask': data['attention_mask'], 'output': test_label}
             test_ds.append(deepcopy(batch))
     else:
         "implement on your own"

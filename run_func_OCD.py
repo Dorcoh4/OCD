@@ -5,10 +5,11 @@ from math import floor as floor
 from torch.utils.data import DataLoader
 from torchvision.transforms import ToTensor
 from copy import deepcopy
+from datasets import load_metric
 import os
 import numpy as np
 from diffusion_ocd import Model,Model_Scale
-from utils_OCD import overfitting_batch_wrapper,noising,generalized_steps,ConfigWrapper
+from utils_OCD import overfitting_batch_wrapper,noising,generalized_steps_eval,ConfigWrapper
 import torch.utils.tensorboard as tb
 from train import train,vgg_encode
 from ema import EMAHelper
@@ -16,7 +17,7 @@ import os
 import argparse
 import json
 from data_loader import wrapper_dataset
-
+from tqdm import tqdm
 
 parser = argparse.ArgumentParser()
 parser.add_argument(
@@ -139,9 +140,13 @@ else:
 #################################################################################################
 
 print('*'*100)
-ldiff,lopt,lbaseline = 0,0,0
+ldiff,lopt,lbaseline = [],[],[]
+labels = []
+progress_bar = tqdm(range(len(test_loader)))
+model.eval()
 for idx, batch in enumerate(test_loader):
     batch['input'] = batch['input'].to(device)
+    batch['attention_mask'] = batch['attention_mask'].to(device)
     batch['output'] = batch['output'].to(device)
     # Overfitting encapsulation #
     weight,hfirst,outin= overfitting_batch_wrapper(
@@ -160,14 +165,30 @@ for idx, batch in enumerate(test_loader):
         encoding_out = outin
     with torch.no_grad():
         std = scale_model(hfirst,encoding_out)
-    ldiffusion, loptimal, lbase, wdiff = generalized_steps(
+    ldiffusion, loptimal, lbase, wdiff = generalized_steps_eval(
         named_parameter=weight_name, numstep=config.diffusion.diffusion_num_steps_eval,
         x=(diff_weight.unsqueeze(0),hfirst,encoding_out), model=diffusion_model,
         bmodel=model, batch=batch, loss_fn=opt_error_loss,
         std=std, padding=padding,
         mat_shape=mat_shape, isnerf=(args.datatype=='tinynerf')
         )
-    ldiff += ldiffusion
-    lopt += loptimal
-    lbaseline += lbase
-    print(f"\rBaseline loss {lbaseline/(idx+1)}, Overfitted loss {lopt/(idx+1)}, Diffusion loss {ldiff/(idx+1)}",end='')
+    ldiff.append(ldiffusion)
+    lopt.append(loptimal)
+    lbaseline.append(lbase)
+    labels.append(batch['output'])
+    progress_bar.update(1)
+    # if idx > 100:
+    #     break
+    # print(f"\rBaseline loss {lbaseline/(idx+1)}, Overfitted loss {lopt/(idx+1)}, Diffusion loss {ldiff/(idx+1)}",end='')
+ldiff = torch.stack(ldiff)
+lopt = torch.stack(lopt)
+lbaseline = torch.stack(lbaseline)
+labels = torch.stack(labels)
+metric = load_metric("f1")
+
+predictions = np.argmax(ldiff.cpu(), axis=-1)
+print(f"ldiff:: {metric.compute(predictions=predictions.squeeze(), references=labels.squeeze(), average='macro')}")
+predictions = np.argmax(lopt.cpu(), axis=-1)
+print(f"lopt:: {metric.compute(predictions=predictions.squeeze(), references=labels.squeeze(), average='macro')}")
+predictions = np.argmax(lbaseline.cpu(), axis=-1)
+print(f"lbaseline:: {metric.compute(predictions=predictions.squeeze(), references=labels.squeeze(), average='macro')}")

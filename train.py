@@ -44,6 +44,7 @@ def train(args, config, optimizer, optimizer_scale,
         for idx, batch in enumerate(train_loader):
             optimizer_scale.zero_grad()
             batch['input'] = batch['input'].to(device)
+            batch['attention_mask'] = batch['attention_mask'].to(device)
             batch['output'] = batch['output'].to(device)
             # Overfitting encapsulation #
             weight,hfirst,outin= overfitting_batch_wrapper(
@@ -70,6 +71,7 @@ def train(args, config, optimizer, optimizer_scale,
         for idx, batch in enumerate(train_loader):
             optimizer_scale.zero_grad()
             batch['input'] = batch['input'].to(device)
+            batch['attention_mask'] = batch['attention_mask'].to(device)
             batch['output'] = batch['output'].to(device)
             # Overfitting encapsulation #
             if args.precompute_all:
